@@ -5,78 +5,74 @@ import pandas as pd
 import zipfile
 from werkzeug.utils import secure_filename
 
-# Check for templating support
+# Ensure templating support
 try:
     from docxtpl import DocxTemplate
-    DOCX_TEMPLATE_AVAILABLE = True
 except ImportError:
-    DOCX_TEMPLATE_AVAILABLE = False
+    DocxTemplate = None
 
 app = Flask(__name__)
+
+# Directory setup
 UPLOAD_FOLDER = "uploads"
 TEMPLATE_FOLDER = os.path.join(UPLOAD_FOLDER, "templates")
 OUTPUT_FOLDER = "outputs"
 
-# Ensure folders exist
 os.makedirs(TEMPLATE_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-@app.route('/')
-def index():
-    """
-    Health check endpoint.
-    """
-    return jsonify({"message": "Letter generation service is running."}), 200
+@app.route('/', methods=['GET'])
+def health_check():
+    return jsonify({"status": "ok", "message": "Service running"}), 200
 
 @app.route('/upload-template', methods=['POST'])
 def upload_template():
-    """
-    Upload a company template.
-    """
     if 'company' not in request.form or 'template' not in request.files:
-        return jsonify({"error": "Missing company name or template file"}), 400
-    company = request.form['company']
-    template = request.files['template']
+        return jsonify({"error": "Missing 'company' or 'template'"}), 400
+    company = request.form['company'].strip()
+    template_file = request.files['template']
     filename = secure_filename(f"{company}.docx")
     path = os.path.join(TEMPLATE_FOLDER, filename)
-    template.save(path)
-    return jsonify({"message": "Template uploaded successfully", "company": company}), 200
+    template_file.save(path)
+    return jsonify({"message": f"Template '{company}' uploaded successfully"}), 200
 
 @app.route('/generate-letters', methods=['POST'])
 def generate_letters():
-    """
-    Generate letters for uploaded student data.
-    """
-    if not DOCX_TEMPLATE_AVAILABLE:
-        return jsonify({"error": "Templating support unavailable. Install docxtpl."}), 500
+    if not DocxTemplate:
+        return jsonify({"error": "Template engine unavailable. Install 'docxtpl'."}), 500
     if 'company' not in request.form or 'file' not in request.files:
-        return jsonify({"error": "Missing company or student file"}), 400
-    company = request.form['company']
-    file = request.files['file']
+        return jsonify({"error": "Missing 'company' or data file"}), 400
+    company = request.form['company'].strip()
+    data_file = request.files['file']
+    # Read data
     try:
-        data = pd.read_excel(file) if file.filename.endswith(".xlsx") else pd.read_csv(file)
+        if data_file.filename.endswith('.xlsx'):
+            df = pd.read_excel(data_file)
+        else:
+            df = pd.read_csv(data_file)
     except Exception as e:
-        return jsonify({"error": f"Failed to read file: {e}"}), 400
-
-    template_path = os.path.join(TEMPLATE_FOLDER, f"{company}.docx")
-    if not os.path.exists(template_path):
-        return jsonify({"error": f"Template not found for {company}"}), 404
-
-    zip_name = f"letters_{uuid.uuid4().hex}.zip"
+        return jsonify({"error": f"Failed to read data: {e}"}), 400
+    # Load template
+    tpl_path = os.path.join(TEMPLATE_FOLDER, f"{company}.docx")
+    if not os.path.exists(tpl_path):
+        return jsonify({"error": f"Template for '{company}' not found"}), 404
+    # Generate letters zip
+    zip_name = f"letters_{company}_{uuid.uuid4().hex}.zip"
     zip_path = os.path.join(OUTPUT_FOLDER, zip_name)
-    with zipfile.ZipFile(zip_path, 'w') as zipf:
-        for _, row in data.iterrows():
-            context = row.to_dict()
-            try:
-                doc = DocxTemplate(template_path)
-                doc.render(context)
-                fname = f"{row.get('name','student')}_{company}_{uuid.uuid4().hex[:8]}.docx"
-                out_path = os.path.join(OUTPUT_FOLDER, fname)
-                doc.save(out_path)
-                zipf.write(out_path, arcname=fname)
-                os.remove(out_path)
-            except Exception as e:
-                return jsonify({"error": f"Row error: {e}"}), 500
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for idx, row in df.iterrows():
+            context = {
+                'Student_Name': row.get('Name of the student', '').strip(),
+                'ref_id': row.get('Reference no', '').strip()
+            }
+            doc = DocxTemplate(tpl_path)
+            doc.render(context)
+            safe_name = context['Student_Name'].replace(' ', '_') or f"student_{idx}"
+            docx_name = f"{safe_name}_{company}_{idx+1}.docx"
+            out_path = os.path.join(OUTPUT_FOLDER, docx_name)
+            doc.save(out_path)
+            zipf.write(out_path, arcname=docx_name)
+            os.remove(out_path)
     return send_file(zip_path, as_attachment=True, download_name=zip_name)
 
 if __name__ == '__main__':
