@@ -80,4 +80,5 @@ def generate_letters():
     return send_file(zip_path, as_attachment=True, download_name=zip_name)
 
 if __name__ == '__main__':
-    print("Flask app setup complete. For sandbox, server start is skipped.")
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
