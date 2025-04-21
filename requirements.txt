@@ -6,3 +6,4 @@ python-docx
 docx2pdf
 pypandoc
 zipfile36
+gunicorn
