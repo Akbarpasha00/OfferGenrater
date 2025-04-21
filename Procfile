@@ -1,1 +1,1 @@
-web: python letter_generator.py
+web: gunicorn letter_generator:app
