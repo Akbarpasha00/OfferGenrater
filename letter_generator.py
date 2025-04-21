@@ -1,4 +1,3 @@
-# letter_generator.py
 from flask import Flask, request, send_file, jsonify
 import uuid
 import os
